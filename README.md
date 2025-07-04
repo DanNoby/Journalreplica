@@ -29,13 +29,13 @@ cd journal-replica
 ## Screenshots (v1)
 
 ### Home Screen
-![Home screen](Screenshots/home.png)
+![Home screen](Screenshots/home.jpeg)
 
 ### Add Entry
-![Add entry screen](Screenshots/entry.png)
+![Add entry screen](Screenshots/entry.jpeg)
 
 ### Face ID Prompt
-![Face ID prompt](Screenshots/faceid.png)
+![Face ID prompt](Screenshots/faceid.jpeg)
 
 
 ## License
