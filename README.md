@@ -28,7 +28,7 @@ cd journal-replica
 ## Screenshots (v1)
 
 ### Home Screen
-<img src="Screenshots/home.jpeg" alt="Home screen" width="300"/>
+<img src="Screenshots/home.png" alt="Home screen" width="300"/>
 
 ### Add Entry
 <img src="Screenshots/entry.jpeg" alt="Entry screen" width="300"/>
