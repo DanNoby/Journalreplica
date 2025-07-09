@@ -7,6 +7,7 @@
 
 import SwiftUI
 import LocalAuthentication
+import PhotosUI
 
 struct ContentView: View {
     @State private var isUnlocked = false
@@ -84,6 +85,8 @@ struct JournalEntry: Identifiable {
     var date: Date
     var isBookmarked: Bool = false
     var showTitle: Bool = true
+    var images: [UIImage] = []
+    // audioRecordings: [URL] = [] // For future
 }
 
 struct JournalHomeView: View {
@@ -104,6 +107,10 @@ struct JournalHomeView: View {
     @State private var showBookmarkedOnly = false
     @State private var entryShowTitle = true
     @State private var showSearchBar = false
+    @State private var selectedImages: [UIImage] = []
+    @State private var showPhotoPicker = false
+    @State private var showFullScreenImage = false
+    @State private var fullScreenImage: UIImage? = nil
     
     @State private var entries: [JournalEntry] = [
         JournalEntry(title: "Started Journal", description: "Today I started my new journal app!", date: Date()),
@@ -174,12 +181,7 @@ struct JournalHomeView: View {
                         ForEach(filteredEntries.indices, id: \ .self) { idx in
                             let entry = filteredEntries[idx]
                             JournalEntryCard(entry: entry, onEdit: {
-                                isEditing = true
-                                entryTitle = entry.title
-                                entryDescription = entry.description
-                                entryDate = entry.date
-                                editIndex = entries.firstIndex(where: { $0.id == entry.id })
-                                showEntrySheet = true
+                                openEditSheet(for: entry)
                             }, onDelete: {
                                 if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
                                     entries.remove(at: realIdx)
@@ -216,8 +218,9 @@ struct JournalHomeView: View {
                 Spacer()
             }
         }
-        .sheet(isPresented: $showEntrySheet) {
+        .sheet(isPresented: $showEntrySheet, onDismiss: { selectedImages = [] }) {
             VStack(spacing: 20) {
+                // Top bar: bookmark, date, ellipsis, Done (always at top)
                 HStack(spacing: 8) {
                     Button(action: {
                         if isEditing, let idx = editIndex {
@@ -274,10 +277,11 @@ struct JournalHomeView: View {
                             entries[idx].description = entryDescription
                             entries[idx].date = entryDate
                             entries[idx].showTitle = entries[idx].showTitle
+                            entries[idx].images = selectedImages // Update images
                             showEntrySheet = false
                         } else {
                             if !entryTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !entryDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                let newEntry = JournalEntry(title: entryTitle, description: entryDescription, date: entryDate, isBookmarked: false, showTitle: entryShowTitle)
+                                let newEntry = JournalEntry(title: entryTitle, description: entryDescription, date: entryDate, isBookmarked: false, showTitle: entryShowTitle, images: selectedImages)
                                 entries.insert(newEntry, at: 0)
                                 entryShowTitle = true
                             }
@@ -285,6 +289,21 @@ struct JournalHomeView: View {
                         }
                     }
                     .font(.headline)
+                }
+                // Image collage preview (for new/edit entry)
+                if !selectedImages.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 2) { // Reduce spacing
+                            ForEach(selectedImages, id: \.self) { img in
+                                Image(uiImage: img)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 120, height: 120) // Larger images
+                                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                    }
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     if (!isEditing && entryShowTitle) || (isEditing && editIndex != nil && entries[editIndex!].showTitle) {
@@ -304,11 +323,29 @@ struct JournalHomeView: View {
                 .padding(.top, 8)
                 .padding(.horizontal, 2)
                 Spacer()
+                // Toolbar above keyboard, always at bottom
+                HStack(spacing: 20) {
+                    Button(action: { showPhotoPicker = true }) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.title2)
+                    }
+                    // ... (other toolbar buttons for future) ...
+                }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(Color(.systemGray6).opacity(0.7))
             }
             .padding()
             .sheet(isPresented: $showEditDateSheet) {
                 EditDateSheet(entryDate: $entryDate, onCancel: { showEditDateSheet = false }, onDone: { showEditDateSheet = false })
                     .ignoresSafeArea()
+            }
+            .sheet(isPresented: $showPhotoPicker) {
+                PhotoPickerView(selectedImages: $selectedImages)
+            }
+            // Full screen image viewer (WhatsApp style)
+            if showFullScreenImage, let img = fullScreenImage {
+                FullScreenImageView(image: img, onClose: { showFullScreenImage = false })
             }
         }
     }
@@ -318,8 +355,20 @@ struct JournalHomeView: View {
         formatter.dateFormat = "EEEE d MMMM"
         return formatter.string(from: date)
     }
+    
+    // When opening the edit sheet, initialize selectedImages with the entry's images
+    func openEditSheet(for entry: JournalEntry) {
+        isEditing = true
+        entryTitle = entry.title
+        entryDescription = entry.description
+        entryDate = entry.date
+        editIndex = entries.firstIndex(where: { $0.id == entry.id })
+        selectedImages = entry.images
+        showEntrySheet = true
+    }
 }
 
+// Show images in face card
 struct JournalEntryCard: View {
     let entry: JournalEntry
     var onEdit: () -> Void
@@ -327,9 +376,31 @@ struct JournalEntryCard: View {
     var onToggleBookmark: () -> Void
     var showTitle: Bool
     var isBookmarked: Bool
+    @State private var showFullScreenImage = false
+    @State private var fullScreenImage: UIImage? = nil
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Image collage
+            if !entry.images.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) { // Reduce spacing
+                        ForEach(entry.images, id: \.self) { img in
+                            Image(uiImage: img)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 120, height: 120) // Larger images
+                                .clipShape(RoundedRectangle(cornerRadius: 6)) // Reduced corner radius
+                                .onTapGesture {
+                                    fullScreenImage = img
+                                    showFullScreenImage = true
+                                }
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                    .padding(.top, 8)
+                }
+            }
             if showTitle {
                 Text(entry.title)
                     .font(.headline)
@@ -364,6 +435,10 @@ struct JournalEntryCard: View {
                 }
             }
             .padding([.horizontal, .bottom], 12)
+            // Full screen image viewer (WhatsApp style)
+            if showFullScreenImage, let img = fullScreenImage {
+                FullScreenImageView(image: img, onClose: { showFullScreenImage = false })
+            }
         }
         .background(
             RoundedRectangle(cornerRadius: 18)
@@ -376,6 +451,81 @@ struct JournalEntryCard: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, d MMMM"
         return formatter.string(from: date)
+    }
+}
+
+// PhotoPickerView for SwiftUI
+struct PhotoPickerView: UIViewControllerRepresentable {
+    @Binding var selectedImages: [UIImage]
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var config = PHPickerConfiguration()
+        config.selectionLimit = 0 // Allow multiple
+        config.filter = .images
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        let parent: PhotoPickerView
+        init(_ parent: PhotoPickerView) { self.parent = parent }
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            picker.dismiss(animated: true)
+            for result in results {
+                if result.itemProvider.canLoadObject(ofClass: UIImage.self) {
+                    result.itemProvider.loadObject(ofClass: UIImage.self) { object, _ in
+                        if let image = object as? UIImage {
+                            DispatchQueue.main.async {
+                                // Prevent duplicates
+                                if !self.parent.selectedImages.contains(where: { $0.pngData() == image.pngData() }) {
+                                    self.parent.selectedImages.append(image)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// WhatsApp-style full screen image viewer
+struct FullScreenImageView: View {
+    let image: UIImage
+    var onClose: () -> Void
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            GeometryReader { geo in
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .scaleEffect(scale)
+                    .gesture(MagnificationGesture()
+                        .onChanged { value in
+                            scale = lastScale * value
+                        }
+                        .onEnded { value in
+                            lastScale = scale
+                        }
+                    )
+            }
+            Button(action: onClose) {
+                Image(systemName: "xmark.circle.fill")
+                    .resizable()
+                    .frame(width: 36, height: 36)
+                    .foregroundColor(.white.opacity(0.8))
+                    .padding(.top, 40)
+                    .padding(.trailing, 20)
+            }
+        }
+        .transition(.opacity)
     }
 }
 
