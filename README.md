@@ -8,6 +8,7 @@ This project is my first experience in iOS app development. My goal is to learn 
  Face ID Lock – Secure your journal with Face ID authentication    
  Add, Edit, and Delete Entries – Easily manage your journal content  
  Sort and Search – Sort by date or bookmark; search by keywords  
+ Pictures and Voicenotes - Enriching the entry experience with distinct media
  Bookmarks – Mark important entries for quick access  
  Custom Dates – Assign and edit dates to backdate entries  
  Responsive Design – Built with SwiftUI for smooth animations and a native iOS feel
@@ -25,7 +26,7 @@ cd journal-replica
 ### 3. Run the app
 - Select an iOS Simulator or your physical iPhone and click Run.
 
-## Screenshots (v1)
+## Screenshots
 
 ### Home Screen
 <img src="Screenshots/home.png" alt="Home screen" width="300"/>
