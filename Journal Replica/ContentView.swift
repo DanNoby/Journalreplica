@@ -8,6 +8,7 @@
 import SwiftUI
 import LocalAuthentication
 import PhotosUI
+import AVFoundation
 
 struct ContentView: View {
     @State private var isUnlocked = false
@@ -86,7 +87,7 @@ struct JournalEntry: Identifiable {
     var isBookmarked: Bool = false
     var showTitle: Bool = true
     var images: [UIImage] = []
-    // audioRecordings: [URL] = [] // For future
+    var audioFiles: [URL] = []
 }
 
 struct JournalHomeView: View {
@@ -111,6 +112,14 @@ struct JournalHomeView: View {
     @State private var showPhotoPicker = false
     @State private var showFullScreenImage = false
     @State private var fullScreenImage: UIImage? = nil
+    @State private var fullScreenImages: [UIImage] = []
+    @State private var fullScreenIndex: Int = 0
+    @State private var showTextFormatSheet = false
+    @State private var showAudioRecorder = false
+    @State private var audioRecorder: AVAudioRecorder?
+    @State private var audioPlayer: AVAudioPlayer?
+    @State private var audioURL: URL? = nil
+    @State private var audioURLs: [URL] = []
     
     @State private var entries: [JournalEntry] = [
         JournalEntry(title: "Started Journal", description: "Today I started my new journal app!", date: Date()),
@@ -278,10 +287,11 @@ struct JournalHomeView: View {
                             entries[idx].date = entryDate
                             entries[idx].showTitle = entries[idx].showTitle
                             entries[idx].images = selectedImages // Update images
+                            entries[idx].audioFiles = audioURLs // Update audio files
                             showEntrySheet = false
                         } else {
                             if !entryTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !entryDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                let newEntry = JournalEntry(title: entryTitle, description: entryDescription, date: entryDate, isBookmarked: false, showTitle: entryShowTitle, images: selectedImages)
+                                let newEntry = JournalEntry(title: entryTitle, description: entryDescription, date: entryDate, isBookmarked: false, showTitle: entryShowTitle, images: selectedImages, audioFiles: audioURLs)
                                 entries.insert(newEntry, at: 0)
                                 entryShowTitle = true
                             }
@@ -291,18 +301,40 @@ struct JournalHomeView: View {
                     .font(.headline)
                 }
                 // Image collage preview (for new/edit entry)
-                if !selectedImages.isEmpty {
+                if !selectedImages.isEmpty || !audioURLs.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 2) { // Reduce spacing
-                            ForEach(selectedImages, id: \.self) { img in
-                                Image(uiImage: img)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 120, height: 120) // Larger images
-                                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                        HStack(spacing: 8) {
+                            ForEach(selectedImages.indices, id: \.self) { idx in
+                                ZStack(alignment: .topTrailing) {
+                                    Image(uiImage: selectedImages[idx])
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 120, height: 120)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    Button(action: {
+                                        selectedImages.remove(at: idx)
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .resizable()
+                                            .frame(width: 22, height: 22)
+                                            .foregroundColor(Color.black.opacity(0.7))
+                                            .background(Color.white.opacity(0.01))
+                                            .clipShape(Circle())
+                                    }
+                                    .offset(x: -6, y: 6)
+                                }
+                            }
+                            ForEach(audioURLs, id: \.self) { url in
+                                AudioWaveformPlayerView(audioURL: url, onDelete: {
+                                    if let idx = audioURLs.firstIndex(of: url) {
+                                        audioURLs.remove(at: idx)
+                                        try? FileManager.default.removeItem(at: url)
+                                    }
+                                })
                             }
                         }
-                        .padding(.horizontal, 2)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 8)
                     }
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -328,6 +360,19 @@ struct JournalHomeView: View {
                     Button(action: { showPhotoPicker = true }) {
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(.title2)
+                            .foregroundColor(.white)
+                    }
+                    Button(action: { showTextFormatSheet = true }) {
+                        Image(systemName: "textformat.size")
+                            .font(.title2)
+                            .foregroundColor(.white)
+                    }
+                    Button(action: {
+                        startAudioRecording()
+                    }) {
+                        Image(systemName: isRecording ? "stop.circle.fill" : "mic.circle")
+                            .font(.title2)
+                            .foregroundColor(isRecording ? .red : .white)
                     }
                     // ... (other toolbar buttons for future) ...
                 }
@@ -343,9 +388,17 @@ struct JournalHomeView: View {
             .sheet(isPresented: $showPhotoPicker) {
                 PhotoPickerView(selectedImages: $selectedImages)
             }
-            // Full screen image viewer (WhatsApp style)
-            if showFullScreenImage, let img = fullScreenImage {
-                FullScreenImageView(image: img, onClose: { showFullScreenImage = false })
+            .actionSheet(isPresented: $showTextFormatSheet) {
+                ActionSheet(title: Text("Text Formatting"), buttons: [
+                    .default(Text("Bold")) { applyTextFormat("**", "**") },
+                    .default(Text("Italic")) { applyTextFormat("*", "*") },
+                    .default(Text("Underline")) { applyTextFormat("_", "_") },
+                    .cancel()
+                ])
+            }
+            // Full screen image gallery viewer
+            if showFullScreenImage, !fullScreenImages.isEmpty {
+                FullScreenGalleryView(images: fullScreenImages, startIndex: fullScreenIndex, onClose: { showFullScreenImage = false })
             }
         }
     }
@@ -364,7 +417,51 @@ struct JournalHomeView: View {
         entryDate = entry.date
         editIndex = entries.firstIndex(where: { $0.id == entry.id })
         selectedImages = entry.images
+        audioURLs = entry.audioFiles // Initialize audio files
         showEntrySheet = true
+    }
+    
+    // Text formatting helper
+    func applyTextFormat(_ prefix: String, _ suffix: String) {
+        // Simple: wrap the whole description for now
+        entryDescription = prefix + entryDescription + suffix
+    }
+    
+    @State private var isRecording = false
+    @State private var recorder: AVAudioRecorder?
+    func startAudioRecording() {
+        if isRecording {
+            recorder?.stop()
+            isRecording = false
+            if let url = recorder?.url {
+                audioURLs.append(url)
+            }
+        } else {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+                try session.setActive(true)
+            } catch {
+                // Handle error
+            }
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let filename = "journal-audio-\(UUID().uuidString).m4a"
+            let url = docs.appendingPathComponent(filename)
+            let settings = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 12000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            ]
+            do {
+                let rec = try AVAudioRecorder(url: url, settings: settings)
+                rec.record()
+                recorder = rec
+                isRecording = true
+            } catch {
+                // Handle error
+            }
+        }
     }
 }
 
@@ -378,26 +475,42 @@ struct JournalEntryCard: View {
     var isBookmarked: Bool
     @State private var showFullScreenImage = false
     @State private var fullScreenImage: UIImage? = nil
+    @State private var fullScreenImages: [UIImage] = []
+    @State private var fullScreenIndex: Int = 0
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Image collage
             if !entry.images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) { // Reduce spacing
-                        ForEach(entry.images, id: \.self) { img in
+                    HStack(spacing: 2) {
+                        ForEach(entry.images.indices, id: \.self) { idx in
+                            let img = entry.images[idx]
                             Image(uiImage: img)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(width: 120, height: 120) // Larger images
-                                .clipShape(RoundedRectangle(cornerRadius: 6)) // Reduced corner radius
+                                .frame(width: 120, height: 120)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
                                 .onTapGesture {
-                                    fullScreenImage = img
+                                    fullScreenImages = entry.images
+                                    fullScreenIndex = idx
                                     showFullScreenImage = true
                                 }
                         }
                     }
-                    .padding(.horizontal, 2)
+                    .padding(.horizontal, 8) // Add left/right padding for consistency
+                    .padding(.top, 8) // Add top padding for consistency
+                }
+            }
+            // Audio collage
+            if !entry.audioFiles.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(entry.audioFiles, id: \.self) { url in
+                            AudioWaveformPlayerView(audioURL: url, onDelete: {})
+                        }
+                    }
+                    .padding(.horizontal, 8)
                     .padding(.top, 8)
                 }
             }
@@ -435,9 +548,9 @@ struct JournalEntryCard: View {
                 }
             }
             .padding([.horizontal, .bottom], 12)
-            // Full screen image viewer (WhatsApp style)
-            if showFullScreenImage, let img = fullScreenImage {
-                FullScreenImageView(image: img, onClose: { showFullScreenImage = false })
+            // Full screen image gallery viewer
+            if showFullScreenImage, !fullScreenImages.isEmpty {
+                FullScreenGalleryView(images: fullScreenImages, startIndex: fullScreenIndex, onClose: { showFullScreenImage = false })
             }
         }
         .background(
@@ -492,30 +605,43 @@ struct PhotoPickerView: UIViewControllerRepresentable {
     }
 }
 
-// WhatsApp-style full screen image viewer
-struct FullScreenImageView: View {
-    let image: UIImage
+// WhatsApp-style full screen image gallery viewer
+struct FullScreenGalleryView: View {
+    let images: [UIImage]
+    let startIndex: Int
     var onClose: () -> Void
+    @State private var currentIndex: Int = 0
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
+    @Environment(\.presentationMode) var presentationMode
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
-            GeometryReader { geo in
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .scaleEffect(scale)
-                    .gesture(MagnificationGesture()
-                        .onChanged { value in
-                            scale = lastScale * value
-                        }
-                        .onEnded { value in
-                            lastScale = scale
-                        }
-                    )
+            TabView(selection: $currentIndex) {
+                ForEach(images.indices, id: \.self) { idx in
+                    GeometryReader { geo in
+                        Image(uiImage: images[idx])
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .scaleEffect(currentIndex == idx ? scale : 1.0)
+                            .gesture(MagnificationGesture()
+                                .onChanged { value in
+                                    if currentIndex == idx {
+                                        scale = lastScale * value
+                                    }
+                                }
+                                .onEnded { value in
+                                    if currentIndex == idx {
+                                        lastScale = scale
+                                    }
+                                }
+                            )
+                    }
+                    .tag(idx)
+                }
             }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .always))
             Button(action: onClose) {
                 Image(systemName: "xmark.circle.fill")
                     .resizable()
@@ -525,7 +651,175 @@ struct FullScreenImageView: View {
                     .padding(.trailing, 20)
             }
         }
+        .onAppear { currentIndex = startIndex }
         .transition(.opacity)
+    }
+}
+
+// Audio Recorder and Player Views
+struct AudioRecorderView: View {
+    @Binding var audioURL: URL?
+    @State private var isRecording = false
+    @State private var recorder: AVAudioRecorder?
+    @State private var tempURL: URL? = nil
+    var body: some View {
+        VStack(spacing: 24) {
+            Text(isRecording ? "Recording..." : "Tap to Record")
+                .font(.headline)
+            Button(action: {
+                if isRecording {
+                    recorder?.stop()
+                    audioURL = tempURL
+                    isRecording = false
+                } else {
+                    let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+                    let settings = [
+                        AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                        AVSampleRateKey: 12000,
+                        AVNumberOfChannelsKey: 1,
+                        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+                    ]
+                    do {
+                        let rec = try AVAudioRecorder(url: temp, settings: settings)
+                        rec.record()
+                        recorder = rec
+                        tempURL = temp
+                        isRecording = true
+                    } catch {
+                        // Handle error
+                    }
+                }
+            }) {
+                Image(systemName: isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                    .resizable()
+                    .frame(width: 64, height: 64)
+                    .foregroundColor(isRecording ? .red : .purple)
+            }
+            if let url = audioURL, !isRecording {
+                AudioPlayerView(audioURL: url)
+            }
+            Spacer()
+        }
+        .padding()
+    }
+}
+
+struct AudioPlayerView: View {
+    let audioURL: URL
+    @State private var player: AVAudioPlayer? = nil
+    @State private var isPlaying = false
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: {
+                if isPlaying {
+                    player?.stop()
+                    isPlaying = false
+                } else {
+                    do {
+                        player = try AVAudioPlayer(contentsOf: audioURL)
+                        player?.play()
+                        isPlaying = true
+                    } catch {}
+                }
+            }) {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .resizable()
+                    .frame(width: 40, height: 40)
+                    .foregroundColor(.purple)
+            }
+            Text(audioURL.lastPathComponent)
+                .font(.caption)
+                .foregroundColor(.white)
+        }
+        .padding(8)
+        .background(Color.black.opacity(0.2))
+        .cornerRadius(10)
+    }
+}
+
+// Audio waveform player view
+struct AudioWaveformPlayerView: View {
+    let audioURL: URL
+    var onDelete: () -> Void
+    @State private var player: AVAudioPlayer? = nil
+    @State private var isPlaying = false
+    @State private var duration: TimeInterval = 0
+    @State private var samples: [Float] = []
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: {
+                if isPlaying {
+                    player?.stop()
+                    isPlaying = false
+                } else {
+                    do {
+                        let session = AVAudioSession.sharedInstance()
+                        try? session.setCategory(.playback, mode: .default, options: [.defaultToSpeaker])
+                        try? session.setActive(true)
+                        player = try AVAudioPlayer(contentsOf: audioURL)
+                        player?.play()
+                        isPlaying = true
+                    } catch {}
+                }
+            }) {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .resizable()
+                    .frame(width: 40, height: 40)
+                    .foregroundColor(.purple)
+            }
+            WaveformView(samples: samples)
+                .frame(height: 40)
+                .onAppear {
+                    samples = AudioWaveformPlayerView.loadSamples(url: audioURL)
+                    duration = (try? AVAudioPlayer(contentsOf: audioURL).duration) ?? 0
+                }
+            Text(AudioWaveformPlayerView.formatTime(duration))
+                .font(.caption)
+                .foregroundColor(.white)
+            Button(action: onDelete) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.gray)
+            }
+        }
+        .padding(8)
+        .background(Color.purple.opacity(0.2))
+        .cornerRadius(10)
+    }
+    static func formatTime(_ t: TimeInterval) -> String {
+        let min = Int(t) / 60
+        let sec = Int(t) % 60
+        return String(format: "%d:%02d", min, sec)
+    }
+    static func loadSamples(url: URL) -> [Float] {
+        guard let file = try? AVAudioFile(forReading: url) else { return [] }
+        let length = Int(file.length)
+        guard length > 0 else { return [] }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(length)) else { return [] }
+        try? file.read(into: buffer)
+        guard let channelData = buffer.floatChannelData?[0] else { return [] }
+        let sampleCount = 60
+        let step = max(1, length / sampleCount)
+        var samples: [Float] = []
+        for i in stride(from: 0, to: length, by: step) {
+            let val = abs(channelData[i])
+            samples.append(val)
+        }
+        return samples
+    }
+}
+
+struct WaveformView: View {
+    let samples: [Float]
+    var body: some View {
+        GeometryReader { geo in
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(samples.indices, id: \.self) { idx in
+                    Capsule()
+                        .fill(Color.blue)
+                        .frame(width: 2, height: max(8, CGFloat(samples[idx]) * geo.size.height))
+                }
+            }
+        }
     }
 }
 
