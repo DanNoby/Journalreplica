@@ -71,8 +71,6 @@ struct ContentView: View {
                     }
                 }
             }
-        } else {
-            authError = error?.localizedDescription ?? "Face ID not available."
         }
     }
 }
@@ -129,14 +127,43 @@ struct JournalHomeView: View {
     
     var filteredEntries: [JournalEntry] {
         let filtered = searchText.isEmpty ? entries : entries.filter { ($0.title.localizedCaseInsensitiveContains(searchText) || $0.description.localizedCaseInsensitiveContains(searchText)) && (!showBookmarkedOnly || $0.isBookmarked) }
-        let sorted = sortAscending ? filtered.sorted { $0.date < $1.date } : filtered.sorted { $0.date > $1.date }
+        let nonEmpty = filtered.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !$0.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let sorted = sortAscending ? nonEmpty.sorted { $0.date < $1.date } : nonEmpty.sorted { $0.date > $1.date }
         return showBookmarkedOnly ? sorted.filter { $0.isBookmarked } : sorted
+    }
+    
+    // Stats calculation
+    var dayStreak: Int {
+        // Calculate the longest streak of consecutive days with entries
+        let dates = entries.map { Calendar.current.startOfDay(for: $0.date) }.sorted(by: >)
+        guard !dates.isEmpty else { return 0 }
+        var streak = 1
+        var currentStreak = 1
+        for i in 1..<dates.count {
+            let diff = Calendar.current.dateComponents([.day], from: dates[i], to: dates[i-1]).day ?? 0
+            if diff == 1 {
+                currentStreak += 1
+                streak = max(streak, currentStreak)
+            } else if diff > 1 {
+                currentStreak = 1
+            }
+        }
+        return streak
+    }
+    var totalWords: Int {
+        entries.reduce(0) { $0 + $1.title.split(separator: " ").count + $1.description.split(separator: " ").count }
+    }
+    var daysJournalled: Int {
+        Set(entries.map { Calendar.current.startOfDay(for: $0.date) }).count
     }
     
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Purple to black gradient background
-            LinearGradient(gradient: Gradient(colors: [Color.purple.opacity(0.7), Color.purple, Color.black]), startPoint: .top, endPoint: .bottom)
+            // Background gradient: tweak colors here if desired
+            LinearGradient(gradient: Gradient(colors: [
+                Color.black, // Top color
+                Color(red: 44/255, green: 18/255, blue: 70/255) // Bottom dark purple
+            ]), startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
             VStack(spacing: 0) {
                 // Header
@@ -183,23 +210,38 @@ struct JournalHomeView: View {
                     }
                 }
                 .padding([.top, .horizontal])
+                // Stats section
+                HStack(spacing: 0) {
+                    statItem(icon: "flame.fill", iconColor: .red, number: dayStreak, label: "Day Streak")
+                    statDivider()
+                    statItem(icon: "quote.opening", iconColor: .yellow, number: totalWords, label: "Words Written")
+                    statDivider()
+                    statItem(icon: "calendar", iconColor: .purple, number: daysJournalled, label: "Days Journalled")
+                }
+                .padding(.vertical, 10)
+                .padding(.horizontal)
                 
                 // Journal Entries List
                 ScrollView {
                     VStack(spacing: 20) {
                         ForEach(filteredEntries.indices, id: \ .self) { idx in
                             let entry = filteredEntries[idx]
-                            JournalEntryCard(entry: entry, onEdit: {
+                            Button(action: {
                                 openEditSheet(for: entry)
-                            }, onDelete: {
-                                if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
-                                    entries.remove(at: realIdx)
-                                }
-                            }, onToggleBookmark: {
-                                if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
-                                    entries[realIdx].isBookmarked.toggle()
-                                }
-                            }, showTitle: entry.showTitle, isBookmarked: entry.isBookmarked)
+                            }) {
+                                JournalEntryCard(entry: entry, onEdit: {
+                                    openEditSheet(for: entry)
+                                }, onDelete: {
+                                    if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
+                                        entries.remove(at: realIdx)
+                                    }
+                                }, onToggleBookmark: {
+                                    if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
+                                        entries[realIdx].isBookmarked.toggle()
+                                    }
+                                }, showTitle: entry.showTitle, isBookmarked: entry.isBookmarked)
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
                         .padding(.horizontal)
                     }
@@ -217,11 +259,15 @@ struct JournalHomeView: View {
                     entryDate = Date()
                     showEntrySheet = true
                 }) {
-                    Image(systemName: "plus.circle.fill")
-                        .resizable()
-                        .frame(width: 60, height: 60)
-                        .foregroundColor(Color.purple.opacity(0.85))
-                        .shadow(radius: 4)
+                    ZStack {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 60, height: 60)
+                            .shadow(radius: 4)
+                        Image(systemName: "plus")
+                            .font(.system(size: 32, weight: .bold))
+                            .foregroundColor(.white)
+                    }
                 }
                 .padding(.bottom, 12)
                 Spacer()
@@ -463,6 +509,32 @@ struct JournalHomeView: View {
             }
         }
     }
+    
+    // Helper for stat item
+    func statItem(icon: String, iconColor: Color, number: Int, label: String) -> some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .foregroundColor(iconColor)
+                    .font(.system(size: 18, weight: .bold))
+                Text("\(number)")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+            }
+            Text(label)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.white.opacity(0.85))
+        }
+        .frame(maxWidth: .infinity)
+    }
+    func statDivider() -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.15))
+            .frame(width: 1, height: 36)
+            .padding(.vertical, 2)
+    }
 }
 
 // Show images in face card
@@ -473,6 +545,7 @@ struct JournalEntryCard: View {
     var onToggleBookmark: () -> Void
     var showTitle: Bool
     var isBookmarked: Bool
+    var onPrint: (() -> Void)? = nil
     @State private var showFullScreenImage = false
     @State private var fullScreenImage: UIImage? = nil
     @State private var fullScreenImages: [UIImage] = []
@@ -540,6 +613,11 @@ struct JournalEntryCard: View {
                     Button { onEdit() } label: { Label("Edit", systemImage: "pencil") }
                     Button(role: .destructive) { onDelete() } label: { Label("Delete", systemImage: "trash") }
                     Button { onToggleBookmark() } label: { Label(isBookmarked ? "Remove Bookmark" : "Bookmark", systemImage: isBookmarked ? "bookmark.fill" : "bookmark") }
+                    Button {
+                        onPrint?()
+                    } label: {
+                        Label("Print", systemImage: "printer")
+                    }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 20)) // Slightly smaller
@@ -610,7 +688,7 @@ struct FullScreenGalleryView: View {
     let images: [UIImage]
     let startIndex: Int
     var onClose: () -> Void
-    @State private var currentIndex: Int = 0
+    @State private var currentIndex: Int = 0 
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @Environment(\.presentationMode) var presentationMode
