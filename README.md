@@ -5,13 +5,16 @@ A SwiftUI-based iOS app inspired by Apple's Journal app.
 This project is my first experience in iOS app development. My goal is to learn **Swift**, **SwiftUI**, and the Apple development ecosystem by recreating the core experience of the iPhone’s Journal app. The app is designed to be **simple**, **beautiful**, and **privacy-focused**, with Face ID support and a modern, card-based UI. It was done and tested entirely on Xcode
 
 ## Features
- Face ID Lock – Secure your journal with Face ID authentication. 
- Add, Edit, and Delete Entries – Easily manage your journal content.  
- Sort and Search – Sort by date or bookmark; search by keywords.  
- Pictures and Voicenotes - Enriching the entry experience with distinct media. 
- Bookmarks – Mark important entries for quick access.  
- Custom Dates – Assign and edit dates to backdate entries.  
- Responsive Design – Built with SwiftUI for smooth animations and a native iOS feel.
+ 1. Face ID Lock – Secure your journal with Face ID authentication. 
+ 2. Add, Edit, and Delete Entries – Easily manage your journal content.  
+ 3. Sort and Search – Sort by date or bookmark; search by keywords.  
+ 4. Pictures and Voicenotes - Enriching the entry experience with distinct media & formatting options. 
+ 5. Notifications - Users can set daily reminder notifications to jot down their experiences.
+ 6. Bookmarks – Mark important entries for quick access.  
+ 7. Stats - Observe streaks of journal entries, total words written and days journaled.
+ 8. Custom Dates – Assign and edit dates to backdate entries.  
+ 9. Print - all entries can be extracted whenever required.
+ 9. Responsive Design – Built with SwiftUI for smooth animations and a native iOS feel.
 
 ## Getting Started
 ### 1. Clone the repository:
