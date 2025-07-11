@@ -32,13 +32,19 @@ cd journal-replica
 ## Screenshots
 
 ### Home Screen
-<img src="Screenshots/home.png" alt="Home screen" width="300"/>
+<img src="Screenshots/home.jpeg" alt="Home screen" width="300"/>
 
 ### Add Entry
 <img src="Screenshots/entry.jpeg" alt="Entry screen" width="300"/>
 
 ### Face ID Prompt
 <img src="Screenshots/faceid.jpeg" alt="Face ID screen" width="300"/>
+
+## Setting Reminders
+<img src="Screenshots/set_reminder.jpeg" alt="Setting reminders" width="300">
+
+## Daily Entry Notification
+<img src="Screenshots/notification.jpeg" alt="Notification" width="300">
 
 
 ## License
