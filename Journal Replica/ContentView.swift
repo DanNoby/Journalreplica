@@ -10,15 +10,20 @@ import LocalAuthentication
 import PhotosUI
 import AVFoundation
 import UIKit
+import UserNotifications
 
 struct ContentView: View {
     @State private var isUnlocked = false
     @State private var authError: String?
+    // Remove notification test state
+    @State private var showReminderSheet = false
+    @State private var reminderTime: Date = UserDefaults.standard.object(forKey: "reminderTime") as? Date ?? Calendar.current.date(bySettingHour: 20, minute: 0, second: 0, of: Date())!
+    @State private var showNotificationAlert = false
     
     var body: some View {
         Group {
             if isUnlocked {
-                JournalHomeView()
+                JournalHomeView(showReminderSheet: $showReminderSheet, reminderTime: $reminderTime)
             } else {
                 VStack(spacing: 24) {
                     Image(systemName: "lock.fill")
@@ -55,6 +60,18 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut, value: isUnlocked)
+        .sheet(isPresented: $showReminderSheet) {
+            ReminderTimePicker(reminderTime: $reminderTime, onSave: {
+                scheduleDailyJournalReminder(at: reminderTime)
+                showReminderSheet = false
+            })
+        }
+        .onChange(of: reminderTime) { newValue in
+            UserDefaults.standard.set(newValue, forKey: "reminderTime")
+        }
+        .alert(isPresented: $showNotificationAlert) {
+            Alert(title: Text("Notifications Disabled"), message: Text("Please enable notifications in Settings to receive reminders."), dismissButton: .default(Text("OK")))
+        }
     }
     
     func authenticate() {
@@ -71,6 +88,61 @@ struct ContentView: View {
                         authError = authenticationError?.localizedDescription ?? "Face ID failed. Please try again."
                     }
                 }
+            }
+        }
+    }
+    
+    private func requestNotificationPermissionAndSchedule() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            if settings.authorizationStatus == .notDetermined {
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+                    if granted {
+                        scheduleTestNotification()
+                    } else {
+                        showNotificationAlert = true
+                    }
+                }
+            } else if settings.authorizationStatus == .denied {
+                showNotificationAlert = true
+            } else {
+                scheduleTestNotification()
+            }
+        }
+    }
+    
+    private func scheduleTestNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Time to journal your day"
+        content.body = "Tap to add entry"
+        content.sound = .default
+        
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 60, repeats: false)
+        let request = UNNotificationRequest(identifier: "testJournalNotification", content: content, trigger: trigger)
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Error scheduling notification: \(error)")
+            } else {
+                DispatchQueue.main.async {
+                    // Removed notificationScheduled = true
+                }
+            }
+        }
+    }
+
+    private func scheduleDailyJournalReminder(at date: Date) {
+        let content = UNMutableNotificationContent()
+        content.title = "Time to journal your day"
+        content.body = "Tap to add entry"
+        content.sound = .default
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
+        let request = UNNotificationRequest(identifier: "dailyJournalReminder", content: content, trigger: trigger)
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["dailyJournalReminder"])
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Error scheduling daily notification: \(error)")
             }
         }
     }
@@ -125,6 +197,9 @@ struct JournalHomeView: View {
         JournalEntry(title: "Walk in Park", description: "Went for a walk in the park.", date: Calendar.current.date(byAdding: .day, value: -1, to: Date())!),
         JournalEntry(title: "Read Book", description: "Read a great book.", date: Calendar.current.date(byAdding: .day, value: -2, to: Date())!)
     ]
+    
+    @Binding var showReminderSheet: Bool
+    @Binding var reminderTime: Date
     
     var filteredEntries: [JournalEntry] {
         let filtered = searchText.isEmpty ? entries : entries.filter { ($0.title.localizedCaseInsensitiveContains(searchText) || $0.description.localizedCaseInsensitiveContains(searchText)) && (!showBookmarkedOnly || $0.isBookmarked) }
@@ -1091,6 +1166,33 @@ struct EditDateSheet: View {
             .padding(.horizontal)
             .padding(.bottom, 24)
             Spacer()
+        }
+    }
+}
+
+struct ReminderTimePicker: View {
+    @Binding var reminderTime: Date
+    var onSave: () -> Void
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 24) {
+                Text("Set Daily Journal Reminder")
+                    .font(.headline)
+                DatePicker("Reminder Time", selection: $reminderTime, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+                Button("Save") {
+                    onSave()
+                }
+                .font(.headline)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.purple.opacity(0.8))
+                .foregroundColor(.white)
+                .cornerRadius(12)
+            }
+            .padding()
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
