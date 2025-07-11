@@ -19,6 +19,7 @@ struct ContentView: View {
     @State private var showReminderSheet = false
     @State private var reminderTime: Date = UserDefaults.standard.object(forKey: "reminderTime") as? Date ?? Calendar.current.date(bySettingHour: 20, minute: 0, second: 0, of: Date())!
     @State private var showNotificationAlert = false
+    @State private var failedFaceIDAttempts = 0
     
     var body: some View {
         Group {
@@ -84,9 +85,34 @@ struct ContentView: View {
                     if success {
                         isUnlocked = true
                         authError = nil
+                        failedFaceIDAttempts = 0
                     } else {
-                        authError = authenticationError?.localizedDescription ?? "Face ID failed. Please try again."
+                        failedFaceIDAttempts += 1
+                        if failedFaceIDAttempts >= 2 {
+                            authenticateWithPasscode()
+                        } else {
+                            authError = authenticationError?.localizedDescription ?? "Face ID failed. Please try again."
+                        }
                     }
+                }
+            }
+        }
+    }
+    
+    func authenticateWithPasscode() {
+        let context = LAContext()
+        var error: NSError?
+        if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
+            let reason = "Authenticate to view your journal."
+            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, authenticationError in
+                DispatchQueue.main.async {
+                    if success {
+                        isUnlocked = true
+                        authError = nil
+                    } else {
+                        authError = authenticationError?.localizedDescription ?? "Authentication failed. Please try again."
+                    }
+                    failedFaceIDAttempts = 0
                 }
             }
         }
@@ -337,7 +363,7 @@ struct JournalHomeView: View {
             ]), startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
             VStack(spacing: 0) {
-                // Header
+                // Header with search, ellipsis, and bell icon
                 HStack {
                     Text("Journal")
                         .font(.largeTitle)
@@ -373,14 +399,29 @@ struct JournalHomeView: View {
                     Menu {
                         Button("Sort by Newest", action: { sortAscending = false; showBookmarkedOnly = false })
                         Button("Sort by Oldest", action: { sortAscending = true; showBookmarkedOnly = false })
+                        Button("Notifications") {
+                            showReminderSheet = true
+                        }
                         Button(showBookmarkedOnly ? "Show All" : "Bookmarked", action: { showBookmarkedOnly.toggle() })
                     } label: {
                         Image(systemName: "ellipsis.circle")
                             .font(.title2)
                             .foregroundColor(.white)
                     }
+                    .padding(.trailing, 8)
                 }
                 .padding([.top, .horizontal])
+                // Show current reminder time
+                HStack {
+                    Text("Reminder: ")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Text(reminderTime, style: .time)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal)
                 // Stats section
                 HStack(spacing: 0) {
                     statItem(icon: "flame.fill", iconColor: .red, number: dayStreak, label: "Day Streak")
@@ -1181,15 +1222,16 @@ struct ReminderTimePicker: View {
                 DatePicker("Reminder Time", selection: $reminderTime, displayedComponents: .hourAndMinute)
                     .datePickerStyle(.wheel)
                     .labelsHidden()
-                Button("Save") {
-                    onSave()
+                Button(action: onSave) {
+                    Text("Save")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.purple.opacity(0.8))
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
                 }
-                .font(.headline)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.purple.opacity(0.8))
-                .foregroundColor(.white)
-                .cornerRadius(12)
+                .contentShape(Rectangle())
             }
             .padding()
             .navigationBarTitleDisplayMode(.inline)
