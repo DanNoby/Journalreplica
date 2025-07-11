@@ -9,6 +9,7 @@ import SwiftUI
 import LocalAuthentication
 import PhotosUI
 import AVFoundation
+import UIKit
 
 struct ContentView: View {
     @State private var isUnlocked = false
@@ -128,8 +129,79 @@ struct JournalHomeView: View {
     var filteredEntries: [JournalEntry] {
         let filtered = searchText.isEmpty ? entries : entries.filter { ($0.title.localizedCaseInsensitiveContains(searchText) || $0.description.localizedCaseInsensitiveContains(searchText)) && (!showBookmarkedOnly || $0.isBookmarked) }
         let nonEmpty = filtered.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !$0.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let sorted = sortAscending ? nonEmpty.sorted { $0.date < $1.date } : nonEmpty.sorted { $0.date > $1.date }
+        // Sort: Yesterday first, then current month, then previous months (all descending)
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let yesterday = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -1, to: today)!)
+        let currentMonth = calendar.component(.month, from: today)
+        let currentYear = calendar.component(.year, from: today)
+        let yesterdayEntries = nonEmpty.filter { calendar.startOfDay(for: $0.date) == yesterday }
+        let currentMonthEntries = nonEmpty.filter {
+            let comps = calendar.dateComponents([.month, .year], from: $0.date)
+            return comps.month == currentMonth && comps.year == currentYear && calendar.startOfDay(for: $0.date) != yesterday
+        }
+        let otherEntries = nonEmpty.filter {
+            let comps = calendar.dateComponents([.month, .year], from: $0.date)
+            return !(comps.month == currentMonth && comps.year == currentYear) && calendar.startOfDay(for: $0.date) != yesterday
+        }
+        let sorted = yesterdayEntries.sorted { $0.date > $1.date } + currentMonthEntries.sorted { $0.date > $1.date } + otherEntries.sorted { $0.date > $1.date }
         return showBookmarkedOnly ? sorted.filter { $0.isBookmarked } : sorted
+    }
+    
+    var groupedEntries: [(header: String, entries: [JournalEntry])]{
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let yesterday = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -1, to: today)!)
+        let currentMonth = calendar.component(.month, from: today)
+        let currentYear = calendar.component(.year, from: today)
+        let filtered = searchText.isEmpty ? entries : entries.filter { ($0.title.localizedCaseInsensitiveContains(searchText) || $0.description.localizedCaseInsensitiveContains(searchText)) && (!showBookmarkedOnly || $0.isBookmarked) }
+        let nonEmpty = filtered.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !$0.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        // Group by Today, Yesterday, Current Month, Previous Months
+        var groups: [(String, [JournalEntry])] = []
+        let todayEntries = nonEmpty.filter { calendar.isDate(calendar.startOfDay(for: $0.date), inSameDayAs: today) }
+        if !todayEntries.isEmpty {
+            groups.append(("Today", todayEntries.sorted { $0.date > $1.date }))
+        }
+        let yesterdayEntries = nonEmpty.filter { calendar.isDate(calendar.startOfDay(for: $0.date), inSameDayAs: yesterday) }
+        if !yesterdayEntries.isEmpty {
+            groups.append(("Yesterday", yesterdayEntries.sorted { $0.date > $1.date }))
+        }
+        let currentMonthEntries = nonEmpty.filter {
+            let comps = calendar.dateComponents([.month, .year], from: $0.date)
+            return comps.month == currentMonth && comps.year == currentYear &&
+                !calendar.isDate(calendar.startOfDay(for: $0.date), inSameDayAs: today) &&
+                !calendar.isDate(calendar.startOfDay(for: $0.date), inSameDayAs: yesterday)
+        }
+        if !currentMonthEntries.isEmpty {
+            let monthFormatter = DateFormatter()
+            monthFormatter.dateFormat = "LLLL"
+            let monthName = monthFormatter.string(from: today)
+            groups.append((monthName, currentMonthEntries.sorted { $0.date > $1.date }))
+        }
+        // Previous months
+        let previousMonths = Dictionary(grouping: nonEmpty.filter {
+            let comps = calendar.dateComponents([.month, .year], from: $0.date)
+            return !(comps.month == currentMonth && comps.year == currentYear) &&
+                !calendar.isDate(calendar.startOfDay(for: $0.date), inSameDayAs: today) &&
+                !calendar.isDate(calendar.startOfDay(for: $0.date), inSameDayAs: yesterday)
+        }) { entry in
+            let comps = calendar.dateComponents([.month, .year], from: entry.date)
+            return comps
+        }
+        let sortedPrevMonths = previousMonths.keys.sorted { a, b in
+            if a.year == b.year { return (a.month ?? 0) > (b.month ?? 0) }
+            return (a.year ?? 0) > (b.year ?? 0)
+        }
+        let monthFormatter = DateFormatter()
+        monthFormatter.dateFormat = "LLLL"
+        for comps in sortedPrevMonths {
+            let entries = previousMonths[comps] ?? []
+            if let month = comps.month, let year = comps.year, !entries.isEmpty {
+                let monthName = monthFormatter.monthSymbols[month-1]
+                groups.append((monthName, entries.sorted { $0.date > $1.date }))
+            }
+        }
+        return groups
     }
     
     // Stats calculation
@@ -155,6 +227,30 @@ struct JournalHomeView: View {
     }
     var daysJournalled: Int {
         Set(entries.map { Calendar.current.startOfDay(for: $0.date) }).count
+    }
+    
+    // Helper for month and yesterday headers
+    func headerTitle(for entry: JournalEntry, previous: JournalEntry?) -> String? {
+        let calendar = Calendar.current
+        let entryDate = calendar.startOfDay(for: entry.date)
+        let yesterday = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -1, to: Date())!)
+        if entryDate == yesterday {
+            return "Yesterday"
+        }
+        let monthFormatter = DateFormatter()
+        monthFormatter.dateFormat = "LLLL"
+        let entryMonth = monthFormatter.string(from: entry.date)
+        let prevMonth = previous.map { monthFormatter.string(from: $0.date) }
+        if previous == nil || entryMonth != prevMonth {
+            return entryMonth
+        }
+        return nil
+    }
+    
+    private func dateFooterString(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE, d MMMM"
+        return formatter.string(from: date)
     }
     
     var body: some View {
@@ -224,24 +320,38 @@ struct JournalHomeView: View {
                 // Journal Entries List
                 ScrollView {
                     VStack(spacing: 20) {
-                        ForEach(filteredEntries.indices, id: \ .self) { idx in
-                            let entry = filteredEntries[idx]
-                            Button(action: {
-                                openEditSheet(for: entry)
-                            }) {
-                                JournalEntryCard(entry: entry, onEdit: {
-                                    openEditSheet(for: entry)
-                                }, onDelete: {
-                                    if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
-                                        entries.remove(at: realIdx)
+                        ForEach(groupedEntries, id: \ .header) { group in
+                            if !group.entries.isEmpty {
+                                HStack {
+                                    Text(group.header)
+                                        .font(.title3)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.white.opacity(0.85))
+                                        .padding(.leading, 8)
+                                    Spacer()
+                                }
+                                .padding(.top, 1) // Minimal space above card
+                                ForEach(group.entries) { entry in
+                                    Button(action: {
+                                        openEditSheet(for: entry)
+                                    }) {
+                                        JournalEntryCard(entry: entry, onEdit: {
+                                            openEditSheet(for: entry)
+                                        }, onDelete: {
+                                            if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
+                                                entries.remove(at: realIdx)
+                                            }
+                                        }, onToggleBookmark: {
+                                            if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
+                                                entries[realIdx].isBookmarked.toggle()
+                                            }
+                                        }, showTitle: entry.showTitle, isBookmarked: entry.isBookmarked, onPrint: {
+                                            printFaceCard(entry: entry)
+                                        })
                                     }
-                                }, onToggleBookmark: {
-                                    if let realIdx = entries.firstIndex(where: { $0.id == entry.id }) {
-                                        entries[realIdx].isBookmarked.toggle()
-                                    }
-                                }, showTitle: entry.showTitle, isBookmarked: entry.isBookmarked)
+                                    .buttonStyle(PlainButtonStyle())
+                                }
                             }
-                            .buttonStyle(PlainButtonStyle())
                         }
                         .padding(.horizontal)
                     }
@@ -534,6 +644,41 @@ struct JournalHomeView: View {
             .fill(Color.white.opacity(0.15))
             .frame(width: 1, height: 36)
             .padding(.vertical, 2)
+    }
+    
+    // Print face card using UIPrintInteractionController
+    func printFaceCard(entry: JournalEntry) {
+        let printFormatter = UIMarkupTextPrintFormatter(markupText: htmlForEntry(entry))
+        let printInfo = UIPrintInfo(dictionary: nil)
+        printInfo.outputType = .general
+        printInfo.jobName = entry.title.isEmpty ? "Journal Entry" : entry.title
+        let controller = UIPrintInteractionController.shared
+        controller.printInfo = printInfo
+        controller.printFormatter = printFormatter
+        controller.present(animated: true, completionHandler: nil)
+    }
+    // Generate HTML for printing the face card
+    func htmlForEntry(_ entry: JournalEntry) -> String {
+        var html = "<div style='font-family: -apple-system; color: #222; padding: 16px; max-width: 400px;'>"
+        if !entry.images.isEmpty {
+            html += "<div style='display: flex; gap: 8px; margin-bottom: 12px;'>"
+            for img in entry.images {
+                if let data = img.jpegData(compressionQuality: 0.8) {
+                    let base64 = data.base64EncodedString()
+                    html += "<img src='data:image/jpeg;base64,\(base64)' style='width: 80px; height: 80px; object-fit: cover; border-radius: 10px;' />"
+                }
+            }
+            html += "</div>"
+        }
+        if !entry.title.isEmpty {
+            html += "<h2 style='margin: 0 0 8px 0;'>\(entry.title)</h2>"
+        }
+        if !entry.description.isEmpty {
+            html += "<p style='margin: 0 0 8px 0;'>\(entry.description)</p>"
+        }
+        html += "<div style='color: #888; font-size: 13px; margin-top: 12px;'>\(dateFooterString(for: entry.date))</div>"
+        html += "</div>"
+        return html
     }
 }
 
